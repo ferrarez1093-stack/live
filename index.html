@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Streamers Conectados</title>
+  <script src="https://unpkg.com"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #0e0e10;
+      color: #ffffff;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+    }
+    .card {
+      background-color: #18181b;
+      padding: 30px;
+      border-radius: 16px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      text-align: center;
+      width: 90%;
+      max-width: 400px;
+      border: 1px solid #2f2f35;
+    }
+    h1 { font-size: 22px; margin-bottom: 20px; color: #bf94ff; }
+    input {
+      width: 100%;
+      padding: 12px;
+      margin-bottom: 12px;
+      border-radius: 8px;
+      border: 1px solid #3a3a3d;
+      background: #0e0e10;
+      color: white;
+      box-sizing: border-box;
+      font-size: 16px;
+    }
+    button {
+      width: 100%;
+      padding: 14px;
+      background-color: #9147ff;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    button:hover { background-color: #772ce8; }
+    .contador-box {
+      background: #26262c;
+      padding: 20px;
+      border-radius: 12px;
+      margin: 20px 0;
+      border: 2px solid #ff4f4d;
+    }
+    .numero {
+      font-size: 64px;
+      font-weight: bold;
+      color: #ff4f4d;
+      line-height: 1;
+    }
+    .label { font-size: 14px; text-transform: uppercase; letter-spacing: 1px; margin-top: 8px; color: #adadb8; }
+    .lista { text-align: left; margin-top: 20px; font-size: 14px; color: #dedee3; }
+    .lista ul { list-style: none; padding: 0; }
+    .lista li { padding: 6px 0; border-bottom: 1px solid #2f2f35; }
+    .ponto-vivo { color: #00f593; margin-right: 8px; }
+    #tela-sala { display: none; }
+    #status { font-size: 12px; color: #adadb8; margin-top: 10px; }
+  </style>
+</head>
+<body>
+
+  <!-- TELA DE ENTRADA -->
+  <div class="card" id="tela-login">
+    <h1>🔴 Conectar na Live</h1>
+    <input type="text" id="nome" placeholder="Seu nome de Streamer" required>
+    <input type="text" id="sala" placeholder="Nome da Sala (ex: squad10)" required>
+    <button onclick="entrar()">Entrar na Sala</button>
+  </div>
+
+  <!-- TELA DO CONTADOR AO VIVO -->
+  <div class="card" id="tela-sala">
+    <h1 id="titulo-sala">Sala: </h1>
+    <div class="contador-box">
+      <div class="numero" id="contador">1</div>
+      <div class="label">👁️ Espectadores / Conectados</div>
+    </div>
+    <div class="lista">
+      <strong>Quem está ao vivo agora:</strong>
+      <ul id="lista-streamers"></ul>
+    </div>
+    <div id="status">Conectando...</div>
+  </div>
+
+  <script>
+    let client;
+    let meuId = 'st_' + Math.random().toString(36).substring(2, 10);
+    let conectados = {};
+    let topicoBase = '';
+    let meuNome = '';
+
+    function atualizarTela() {
+      const agora = Date.now();
+      const ativos = [];
+
+      for (const id in conectados) {
+        if (agora - conectados[id].ts < 45000) {
+          ativos.push(conectados[id].nome);
+        } else {
+          delete conectados[id];
+        }
+      }
+
+      document.getElementById('contador').innerText = ativos.length;
+      const ul = document.getElementById('lista-streamers');
+      ul.innerHTML = '';
+      ativos.forEach(nome => {
+        const li = document.createElement('li');
+        li.innerHTML = `<span class="ponto-vivo">●</span> ${nome}`;
+        ul.appendChild(li);
+      });
+    }
+
+    function entrar() {
+      meuNome = document.getElementById('nome').value.trim();
+      const sala = document.getElementById('sala').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+
+      if (!meuNome || !sala) {
+        alert("Preencha seu nome e o nome da sala!");
+        return;
+      }
+
+      document.getElementById('tela-login').style.display = 'none';
+      document.getElementById('tela-sala').style.display = 'block';
+      document.getElementById('titulo-sala').innerText = "Sala: " + sala.toUpperCase();
+
+      topicoBase = `ferrarez-live-app-2026/${sala}`;
+      const meuTopico = `${topicoBase}/${meuId}`;
+
+      conectados[meuId] = { nome: meuNome, ts: Date.now() };
+      atualizarTela();
+
+      client = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
+        clientId: meuId,
+        will: {
+          topic: meuTopico,
+          payload: '',
+          qos: 1,
+          retain: true
+        }
+      });
+
+      client.on('connect', () => {
+        document.getElementById('status').innerText = "🟢 Conectado em tempo real";
+        client.subscribe(`${topicoBase}/+`);
+
+        const anunciar = () => {
+          const dados = JSON.stringify({ nome: meuNome, ts: Date.now() });
+          client.publish(meuTopico, dados, { qos: 1, retain: true });
+        };
+
+        anunciar();
+        setInterval(anunciar, 15000);
+        setInterval(atualizarTela, 5000);
+      });
+
+      client.on('message', (topic, message) => {
+        const idRemetente = topic.split('/').pop();
+        const texto = message.toString();
+
+        if (!texto) {
+          delete conectados[idRemetente];
+        } else {
+          try {
+            const dados = JSON.parse(texto);
+            conectados[idRemetente] = dados;
+          } catch (e) {}
+        }
+        atualizarTela();
+      });
+
+      window.addEventListener('beforeunload', () => {
+        if (client && client.connected) {
+          client.publish(meuTopico, '', { qos: 1, retain: true });
+        }
+      });
+    }
+  </script>
+</body>
+</html>
